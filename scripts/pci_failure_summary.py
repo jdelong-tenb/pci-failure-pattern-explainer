@@ -66,7 +66,7 @@ def list_pci_scans():
     scans = resp.get("scans") or []
     pci_scans = [
         s for s in scans
-        if "pci" in s.get("name", "").lower() or "asv" in s.get("name", "").lower()
+        if "pci" in (s.get("name") or "").lower() or "asv" in (s.get("name") or "").lower()
     ]
     if not pci_scans:
         print("No PCI/ASV scans found.")
@@ -113,6 +113,11 @@ def summarize_scan(scan_id):
     print(f"  Attestation-blocking (CVSS >= 4.0): {len(blocking)}")
     print(f"    Critical: {len(crit)}, High: {len(high)}, Medium: {len(med)}")
     print(f"  Below threshold (Low/Info):          {len(non_blocking)}")
+    print(
+        "  Note: bucketed by Tenable's integer severity level, not a fetched CVSS "
+        "base score — a real Medium finding can occasionally fall just under 4.0. "
+        "Run the full PCI Failure Pattern Explainer skill for a per-finding CVSS check."
+    )
 
     if not blocking:
         print()
@@ -126,7 +131,7 @@ def summarize_scan(scan_id):
     for v in sorted(blocking, key=lambda x: x.get("severity", 0), reverse=True):
         sev = SEVERITY_LABELS.get(v.get("severity", 0), "?")
         plugin_id = v.get("plugin_id", "?")
-        plugin_name = v.get("plugin_name", f"Plugin {plugin_id}")
+        plugin_name = v.get("plugin_name") or f"Plugin {plugin_id}"
         count = v.get("count", 1)
         print(f"  [{sev:8}] {plugin_name[:55]:<55} plugin {plugin_id} | {count} host(s)")
 
