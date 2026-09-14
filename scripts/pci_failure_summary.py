@@ -68,8 +68,16 @@ def list_pci_scans():
         s for s in scans
         if "pci" in (s.get("name") or "").lower() or "asv" in (s.get("name") or "").lower()
     ]
+    # Fallback: if name filter returns nothing, check owner email for "pciasv" or "asv"
     if not pci_scans:
-        print("No PCI/ASV scans found.")
+        pci_scans = [
+            s for s in scans
+            if "pciasv" in s.get("owner", "").lower() or "asv" in s.get("owner", "").lower()
+        ]
+        if pci_scans:
+            print("Note: No scans matched by name; found these by owner email (pciasv/asv):")
+    if not pci_scans:
+        print("No PCI/ASV scans found by name or owner.")
         print("Run a PCI ASV scan first, or use the PCI ASV Scan Copilot skill to set one up.")
         return
     print("PCI/ASV scans (most recent first):")
@@ -140,6 +148,15 @@ def summarize_scan(scan_id):
     print("  - Plain-English explanation of each finding")
     print("  - PCI DSS v4.0 requirement cross-references")
     print("  - Dispute vs. fix recommendation with evidence guidance")
+    print()
+    print("Note: The skill's workbench vulnerability listing caps at 5,000 results.")
+    print("If the skill reports exactly 5,000 findings, filter by plugin family for")
+    print("complete counts. This script uses scan-level data and is not subject to")
+    print("that cap, but may show fewer details than the full workbench query.")
+    print()
+    print("Note: For attestation cross-reference via iris_list_container_attestations,")
+    print("the full container UUID (36-char, xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) is")
+    print("required. A short-form ID silently returns empty results.")
 
 
 def main():
