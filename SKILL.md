@@ -21,14 +21,30 @@ Once a scan is selected, call `mcp__tenable-vpod__scan_results` with that scan_i
 
 First check for PCI verdict plugins in the scan results: plugin 33930 (COMPLIANT) means the scan passed — no failures to explain. Plugin 33929 (NOT COMPLIANT) confirms the scan failed — proceed to analyze individual findings below.
 
-**Attestation deadline (if requested):** If the user wants to know their upcoming attestation deadline, look up the attestation record using their container UUID. The full UUID is required — 36 characters in xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx format. If the user supplies a short-form ID, surface an error before proceeding: "A full container UUID is required for attestation lookup. Please provide the complete UUID from your Tenable container settings."
-
 **Scan age:** After identifying the scan, surface the scan date from the results. PCI DSS scan results are valid for 90 days — if this scan is more than 60 days old, flag it prominently before continuing the analysis: "This scan is [N] days old. PCI ASV scan results are only valid for 90 days. You may need to re-scan before your triage work here is actionable." Do not proceed silently past a scan that may already be expired.
+
+**Quarterly trend comparison (offer after surfacing scan age):**
+
+Call `mcp__tenable-vpod__scan_list_scans` and filter for other completed PCI/ASV scans sorted by completion date descending. If a prior scan exists within the last 120 days (one quarter plus a buffer for scheduling slippage), offer to run a trend comparison against it.
+
+For the comparison, compare finding sets by plugin ID + host pair:
+- **New findings** (current scan only): newly introduced since last quarter — flag immediately if CVSS ≥ 7.0, as these represent regression.
+- **Resolved findings** (prior scan only): confirmed remediations — acknowledge explicitly so the infrastructure team sees credit for work done.
+- **Repeat findings** (both scans, same plugin ID + host): systemic, unaddressed issues. Lead the analysis with these — a finding that survived a full quarter without remediation signals a process gap, not just a technical one. Exception: a finding may recur after a previously accepted dispute expires — ASV disputes must be re-submitted each quarterly scan cycle. Before treating a repeat finding as unaddressed, check the attestation portal to confirm whether it was disputed last quarter.
+
+Present the trend summary before Step 2's detailed categorization:
+> "Compared to your [prior scan date] scan: **N new** findings, **N resolved**, **N repeat offenders**. Repeat offenders are analyzed first below."
+
+If the prior scan is more than 90 days old, note the compliance gap (see also: scan cadence check).
+
+**Known limitation — scope changes:** Scope changes between scans (e.g., hostname vs. IP address for the same host, or a CIDR range that now includes additional hosts) can cause the comparison to misclassify same-host findings as "new" or "resolved." Review apparent regressions in context of any scope changes.
 
 **Example user prompts:**
 - "Explain my PCI scan failures"
 - "Analyze my most recent PCI scan"
 - "I don't understand the failures from my ASV scan last week"
+- "How did this scan compare to last quarter?"
+- "Which findings have we seen before?"
 
 ## Step 2 — Categorize findings
 
@@ -155,7 +171,39 @@ For each dispute recommendation, provide:
 
 For each fix recommendation, provide the exact remediation step from `plugins_get_plugin_details` plus a time estimate (urgent: under 24 hours for CVSS 9+; high priority: within 7 days for CVSS 7–8.9; standard: within 30 days for CVSS 4–6.9).
 
-**Preparing a dispute:** When the recommendation is to dispute, help the customer assemble everything they need before they go to the attestation portal. They will need: (1) the vulnerability name and plugin ID, (2) the dispute reason (false positive, acceptable use, or compensating control), (3) supporting evidence (configuration screenshots, network diagrams, compensating control documentation), and (4) a brief written justification. The skill's job is to help them gather and frame this evidence — the actual dispute is submitted through the attestation portal outside this workflow.
+**Draft ASV dispute submission:**
+
+When the recommendation is to dispute, generate a complete draft submission — not just an evidence checklist. The user should be able to copy this text directly into their ASV's dispute portal.
+
+The templates below cover the three most common dispute patterns. Adapt the justification to the actual scanner output from `workbenches_get_vulnerability_outputs` — do not paste template language that doesn't match the finding.
+
+For each dispute-recommended finding, produce:
+
+```
+Vulnerability: [Plugin name] (Plugin ID: [plugin_id])
+Host: [IP or hostname]
+Dispute Type: [False Positive | Compensating Control | Acceptable Use]
+
+Justification:
+[2–3 sentences specific to this finding type, written in plain English:
+ - What the scanner detected and why it triggered
+ - Why the finding does not represent actual exploitable risk in this environment
+ - The specific evidence that supports this position]
+
+Supporting Evidence to Attach:
+- [Specific item 1 — e.g., "Screenshot of load balancer TLS configuration showing TLS 1.2+ enforcement"]
+- [Specific item 2 — e.g., "Architecture diagram showing external traffic terminates at the load balancer, not the flagged host"]
+```
+
+Tailor the justification language to the finding type:
+- **TLS negotiation artifact on load balancer:** "The scanner detected [protocol/cipher] during the handshake negotiation phase, but the load balancer enforces [TLS 1.2/1.3] for all cardholder data traffic. The flagged negotiation artifact occurs at the inspection layer before the actual connection is established and does not reflect the cipher suite applied to cardholder data."
+- **Banner version disclosure:** "The [software] version string returned in the service banner indicates [version], but the installed software has been patched to [current patched state] and does not contain the vulnerability associated with this CVE. Version display in banners does not reflect actual patch level."
+- **Port serving legitimate function:** "Port [N] is required by [business function] and is listed in the cardholder data environment's approved service inventory. Traffic on this port is restricted to [specific source/destination] via [firewall rule/ACL reference]."
+- **Network-unreachable service:** "The scanner detected [vulnerability] on [service] at [port]. While the vulnerability is present, the service is not reachable from an external network position — [network segment/firewall rule] prevents inbound access from outside the CDE perimeter. The finding was triggered because the ASV scanner has a network vantage point within the environment that is not representative of an external attacker's access."
+
+Fill in all bracketed placeholders before submitting — the values in brackets (e.g., `[firewall rule/ACL reference]`, `[specific source/destination]`) cannot be derived from scan data and must be supplied by the customer.
+
+The actual dispute is submitted through the ASV's attestation portal — this draft gives the user the language to paste in.
 
 **Example user prompts:**
 - "Which of these can I dispute?"
@@ -210,11 +258,8 @@ After remediating findings, the customer must trigger a new scan to confirm the 
 - `mcp__tenable-vpod__scan_list_scans` — list recent scans to find the right one
 - `mcp__tenable-vpod__scan_results` — retrieve completed scan findings
 - `mcp__tenable-vpod__workbenches_list_assets_with_vulnerabilities` — required to get asset UUIDs before calling `workbenches_get_asset_vulnerabilities`
-- `mcp__tenable-vpod__workbenches_get_asset_vulnerabilities` — per-asset vulnerability detail
-- `mcp__tenable-vpod__workbenches_get_vulnerability_details` — full vulnerability description
 - `mcp__tenable-vpod__workbenches_get_vulnerability_outputs` — raw scanner output for dispute evidence
 - `mcp__tenable-vpod__plugins_get_plugin_details` — plugin description, CVSS, remediation text, DSS cross-references
-- `mcp__iris__iris_list_container_attestations` — container attestation status and deadline (Step 1)
 
 ## Known limitations
 
